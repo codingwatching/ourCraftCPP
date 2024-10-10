@@ -1227,6 +1227,8 @@ void serverWorkerUpdate(
 
 				if (client)
 				{
+						
+
 
 					//if the revision number isn't good we don't do anything
 					if (client->playerData.inventory.revisionNumber
@@ -1239,78 +1241,49 @@ void serverWorkerUpdate(
 						}
 						else
 						{ 
-							Item *to = client->playerData.inventory.getItemFromIndex(i.t.to);
+							int craftingIndex = i.t.craftingRecepieIndex;
+							auto to = i.t.to;
 
-							if (to)
+							if (!recepieExists(craftingIndex))
 							{
+								sendPlayerInventoryAndIncrementRevision(*client); //dissalow
+							}
+							else
+							{
+								
+								auto resultCrafting = getRecepieFromIndexUnsafe(craftingIndex);
 
-								Item itemToCraft;
+								auto toslot = client->playerData.inventory.getItemFromIndex(to);
 
-								if (client->playerData.interactingWithBlock == InteractionTypes::craftingTable)
+								if (!toslot)
 								{
-									itemToCraft = craft9(client->playerData.inventory.crafting);
+									sendPlayerInventoryAndIncrementRevision(*client); //dissalow
 								}
 								else
 								{
-									itemToCraft = craft4(client->playerData.inventory.crafting);
-								}
 
-
-								if (itemToCraft.type == i.t.itemType)
-								{
-
-									//todo also check size here
-
-									if (to->type == 0)
+									if (!canItemBeCrafted(resultCrafting, client->playerData.inventory))
 									{
-										if (client->playerData.interactingWithBlock == InteractionTypes::craftingTable)
-										{
-											client->playerData.inventory.craft9();
-										}
-										else
-										{
-											client->playerData.inventory.craft4();
-										}
-
-										*to = itemToCraft;
-									}
-									else if (to->type == itemToCraft.type)
-									{
-
-										if (to->counter < to->getStackSize() &&
-											to->counter + itemToCraft.counter <= to->getStackSize())
-										{
-
-											if (client->playerData.interactingWithBlock == InteractionTypes::craftingTable)
-											{
-												client->playerData.inventory.craft9();
-											}
-											else
-											{
-												client->playerData.inventory.craft4();
-											}
-
-											to->counter += itemToCraft.counter;
-										}
+										sendPlayerInventoryAndIncrementRevision(*client);
 
 									}
 									else
 									{
-										sendPlayerInventoryAndIncrementRevision(*client);
+										if (!canItemBeMovedToAndMoveIt(resultCrafting.result, *toslot))
+										{
+											sendPlayerInventoryAndIncrementRevision(*client);
+										}
+										else
+										{
+											craftItemUnsafe(resultCrafting, client->playerData.inventory);
+										}
 									}
 
 								}
-								else
-								{
-									sendPlayerInventoryAndIncrementRevision(*client);
-								}
 
 
 							}
-							else
-							{
-								sendPlayerInventoryAndIncrementRevision(*client);
-							}
+
 						}
 
 						

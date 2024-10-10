@@ -6,6 +6,9 @@
 #include <gamePlayLogic.h>
 #include <gameplay/player.h>
 #include <gameplay/blocks/structureBaseBlock.h>
+#include <gameplay/crafting.h>
+#include <audioEngine.h>
+#include <iostream>
 
 float determineTextSize(gl2d::Renderer2D &renderer, const std::string &str,
 	gl2d::Font &f, glm::vec4 transform, bool minimize = true)
@@ -64,6 +67,8 @@ float determineTextSize(gl2d::Renderer2D &renderer, const std::string &str,
 void renderTextIntoBox(gl2d::Renderer2D &renderer, const std::string &str,
 	gl2d::Font &f, glm::vec4 transform, glm::vec4 color, bool minimize = true, bool alignLeft = false)
 {
+	if (!str.length()) { return; }
+
 	auto newS = determineTextSize(renderer, str, f, transform, minimize);
 
 	glm::vec2 pos = glm::vec2(transform);
@@ -188,23 +193,35 @@ void UiENgine::clearOnlyTextures()
 }
 
 const int INVENTORY_TAB_DEFAULT = 0;
-const int INVENTORY_TAB_BLOCKS = 1;
-const int INVENTORY_TAB_ITEMS = 2;
+const int INVENTORY_TAB_CRAFTING = 1;
+const int INVENTORY_TAB_BLOCKS = 2;
+const int INVENTORY_TAB_ITEMS = 3;
 
 void UiENgine::renderGameUI(float deltaTime, int w, int h
 	, int itemSelected, PlayerInventory &inventory, BlocksLoader &blocksLoader,
-	bool insideInventory, int &cursorItemIndex, Item &itemToCraft,
+	bool insideInventory, int &cursorItemIndex,
 	bool insideCraftingTable, int &currentInventoryTab, bool isCreative,
-	unsigned short &selectedItem, Life &playerHealth, ProgramData &programData, LocalPlayer &player)
+	unsigned short &selectedItem, Life &playerHealth, ProgramData &programData, LocalPlayer &player
+	, int &craftingSlider, int &outCraftingRecepieGlobalIndex
+)
 {
 
-	if (!isCreative) { currentInventoryTab = INVENTORY_TAB_DEFAULT; }
+	outCraftingRecepieGlobalIndex = -1;
+	if (!isCreative) 
+	{
+		if (currentInventoryTab == INVENTORY_TAB_BLOCKS || currentInventoryTab == INVENTORY_TAB_ITEMS)
+		{
+			currentInventoryTab = INVENTORY_TAB_DEFAULT;
+		}
+
+	}
 
 	cursorItemIndex = -1;
 	glm::vec4 cursorItemIndexBox = {};
+	Item *currentItem = {};
 	auto mousePos = platform::getRelMousePosition();
 
-	auto renderOneItem = [&](glm::vec4 itemBox, Item & item, float in = 8.f / 22.f)
+	auto renderOneItem = [&](glm::vec4 itemBox, Item & item, float in = 8.f / 22.f, float color = 1)
 	{
 		if (item.type == 0)return;
 
@@ -215,7 +232,7 @@ void UiENgine::renderGameUI(float deltaTime, int w, int h
 			t.id = blocksLoader.texturesIds[getGpuIdIndexForBlock(item.type, 0)];
 
 			//we have a block
-			renderer2d.renderRectangle(shrinkRectanglePercentage(itemBox, in), t);
+			renderer2d.renderRectangle(shrinkRectanglePercentage(itemBox, in), t, {color, color, color, 1});
 
 
 		}
@@ -226,7 +243,7 @@ void UiENgine::renderGameUI(float deltaTime, int w, int h
 			t.id = blocksLoader.texturesIdsItems[item.type - ItemsStartPoint];
 
 			//we have a block
-			renderer2d.renderRectangle(shrinkRectanglePercentage(itemBox, in), t);
+			renderer2d.renderRectangle(shrinkRectanglePercentage(itemBox, in), t, {color, color, color, 1});
 		}
 
 		if (item.counter != 1)
@@ -254,13 +271,15 @@ void UiENgine::renderGameUI(float deltaTime, int w, int h
 		if (insideInventory)
 		{
 
-			renderer2d.renderRectangle({0,0,w,h}, {0.1,0.1,0.1,0.1});
+			auto allItems = getAllPossibleRecepies(inventory);
+
+			renderer2d.renderRectangle({0,0,w,h}, {0.1,0.1,0.1,0.05});
 
 			float minDimenstion = std::min(w, h);
 
 			float aspectIncrease = 0;
 
-			if (insideCraftingTable || currentInventoryTab == INVENTORY_TAB_ITEMS || currentInventoryTab == INVENTORY_TAB_BLOCKS)
+			if (currentInventoryTab == INVENTORY_TAB_ITEMS || currentInventoryTab == INVENTORY_TAB_BLOCKS)
 			{
 				aspectIncrease = 0.10;
 			}
@@ -281,7 +300,7 @@ void UiENgine::renderGameUI(float deltaTime, int w, int h
 
 			//render inventory box
 			renderer2d.render9Patch(inventoryBox,
-				24, {1,1,1,1}, {}, 0.f, buttonTexture, GL2D_DefaultTextureCoords, {0.2,0.8,0.8,0.2});
+				24, {1,1,1,0.5}, {}, 0.f, buttonTexture, GL2D_DefaultTextureCoords, {0.2,0.8,0.8,0.2});
 			//renderer2d.renderRectangle(inventoryBox, {1,0,0,1});
 
 			if (glui::aabb(inventoryBox, mousePos))
@@ -311,6 +330,7 @@ void UiENgine::renderGameUI(float deltaTime, int w, int h
 						if (glui::aabb(itemBox, mousePos))
 						{
 							cursorItemIndex = i;
+							currentItem = inventory.getItemFromIndex(cursorItemIndex);
 							cursorItemIndexBox = itemBox;
 							renderer2d.renderRectangle(shrinkRectanglePercentage(itemBox, (2.f / 22.f)),
 								{0.7,0.7,0.7,0.5});
@@ -330,6 +350,7 @@ void UiENgine::renderGameUI(float deltaTime, int w, int h
 						if (glui::aabb(itemBox, mousePos))
 						{
 							selectedItem = i;
+							currentItem = inventory.getItemFromIndex(cursorItemIndex);
 							cursorItemIndexBox = itemBox;
 							renderer2d.renderRectangle(shrinkRectanglePercentage(itemBox, (2.f / 22.f)),
 								{0.7,0.7,0.7,0.5});
@@ -345,6 +366,7 @@ void UiENgine::renderGameUI(float deltaTime, int w, int h
 					if (glui::aabb(itemBox, mousePos))
 					{
 						cursorItemIndex = start;
+						currentItem = inventory.getItemFromIndex(cursorItemIndex);
 						cursorItemIndexBox = itemBox;
 						renderer2d.renderRectangle(shrinkRectanglePercentage(itemBox, (2.f / 22.f)),
 							{0.7,0.7,0.7,0.5});
@@ -422,7 +444,9 @@ void UiENgine::renderGameUI(float deltaTime, int w, int h
 					return slider;
 				};
 
-				if(currentInventoryTab == INVENTORY_TAB_DEFAULT)
+				if(currentInventoryTab == INVENTORY_TAB_DEFAULT || 
+					currentInventoryTab == INVENTORY_TAB_CRAFTING
+					)
 				{
 
 					//bottom part
@@ -444,10 +468,157 @@ void UiENgine::renderGameUI(float deltaTime, int w, int h
 
 
 					//upper part
-					glui::Frame insideUpperPart(glui::Box().xCenter().yTopPerc(0.05).
-						xDimensionPercentage(0.9).yDimensionPercentage(0.45)());
 					
 
+					//crafting box
+					if(currentInventoryTab == INVENTORY_TAB_CRAFTING)
+					{
+						glui::Frame insideUpperPart(glui::Box().xCenter().yTopPerc(0.1).
+							xDimensionPercentage(0.9).yDimensionPercentage(0.45)());
+
+						//highlight
+						//renderer2d.renderRectangle(glui::Box().xLeft().yTop().xDimensionPercentage(1.f).
+						//yDimensionPercentage(1.f)(), {1,0,0,0.5});
+
+
+						auto craftingItems = glui::Box().xCenter().yTopPerc(0).xDimensionPercentage(1.f).
+							yAspectRatio(itemsBarInventorySize.y / itemsBarInventorySize.x)();
+						//renderer2d.renderRectangle(craftingItems, itemsBarInventory);
+
+
+						if (allItems.size())
+						{
+							int currentPos = craftingSlider;
+							craftingSlider -= platform::getScroll();
+							int minVal = 0;
+							if (allItems.size() <= 7)
+							{
+								minVal = -(allItems.size() - 2);
+							}
+
+							craftingSlider = glm::clamp(craftingSlider, -1, std::max((int)allItems.size() + 7 - 9, minVal));
+
+							if (currentPos != craftingSlider && platform::getScroll())
+							{
+								AudioEngine::playSound(AudioEngine::uiSlider, UI_SOUND_VOLUME);
+							}
+						}
+
+						if (allItems.size())
+						{
+							auto itemBox = craftingItems;
+							itemBox.z = itemBox.w;
+							int start = craftingSlider;
+
+							auto doOneRender = [&](int i)
+							{
+								if (allItems.size() > i)
+								{
+									itemBox.x = craftingItems.x + itemBox.z * (i - start);
+
+									int distance = glm::abs(1 - (i - start));
+
+									renderOneItem(itemBox, allItems[i].recepie.result, (float)distance / 22.f, 1.f - distance / 12.f);
+								}
+							};
+
+							for (int i = start; i < start + 9; i++)
+							{
+								if (i != start + 1)
+								{
+									doOneRender(i);
+								}
+							}
+
+							{
+								auto box = itemBox; box.x = craftingItems.x + itemBox.z * (1);
+								auto itemBox = box;
+								itemBox.z = itemBox.w;
+
+								renderer2d.renderRectangle(shrinkRectanglePercentage(itemBox, -0.3), oneInventorySlot);
+
+								if (glui::aabb(itemBox, mousePos))
+								{
+									//cursorItemIndex = i;
+									cursorItemIndexBox = itemBox;
+									currentItem = &allItems[start + 1].recepie.result;
+									renderer2d.renderRectangle(shrinkRectanglePercentage(itemBox, -0.3 + (0.3f/4.f)),
+										{0.7,0.7,0.7,0.5});
+
+									//crafting selected
+									if (allItems.size() > start + 1)
+									{
+										outCraftingRecepieGlobalIndex = allItems[start+1].index;
+									}
+								}
+
+							}
+
+							doOneRender(start + 1);
+							
+						}
+
+
+						{
+
+							auto craftingWindowBox = glui::Box().xCenter().yTopPerc(0.05).
+								xDimensionPercentage(1).yDimensionPercentage(1)();
+							craftingWindowBox.y += craftingItems.w;
+							craftingWindowBox.w -= craftingItems.w;
+
+							craftingWindowBox = shrinkRectanglePercentage(craftingWindowBox, 0.05);
+
+							glui::Frame craftingWindow(craftingWindowBox);
+
+							{
+								//renderer2d.render9Patch(glui::Box().xLeft().yTop().xDimensionPercentage(1.f).yDimensionPercentage(1.f)(),
+								//	24, {0.3,0.3,0.6,1}, {}, 0.f, buttonTexture, GL2D_DefaultTextureCoords, {0.2,0.8,0.8,0.2});
+
+								//render recepie requests
+
+								int index = craftingSlider + 1;
+
+								if (allItems.size() > index)
+								{
+									auto craftingItems = glui::Box().xCenter().yTopPerc(0).xDimensionPercentage(1.f).
+										yAspectRatio(itemsBarInventorySize.y / itemsBarInventorySize.x)();
+									//renderer2d.renderRectangle(craftingItems, itemsBarInventory);
+									auto &recepie = allItems[index];
+
+									auto box = craftingItems;
+									box.z = oneItemSize;
+									box.w = oneItemSize;
+									box.x += box.z * 0.6;
+
+									for (int i = 0; i < sizeof(recepie.recepie.items) / sizeof(recepie.recepie.items[0]); i++)
+									{
+
+										if (recepie.recepie.items[i].type == 0)
+										{
+											break;
+										}
+
+										if (glui::aabb(box, mousePos))
+										{
+											//cursorItemIndex = i;
+											cursorItemIndexBox = box;
+											currentItem = &recepie.recepie.items[i];
+										}
+
+										renderOneItem(box, recepie.recepie.items[i]);
+										box.y += box.z * 0.8;
+
+									}
+
+								}
+
+
+							}
+						}
+
+
+
+					}
 			
 
 					//highlight
@@ -455,142 +626,35 @@ void UiENgine::renderGameUI(float deltaTime, int w, int h
 					//	yDimensionPercentage(1.f)(), {1,0,0,0.5});
 
 					//player stuff
+					if (currentInventoryTab == INVENTORY_TAB_DEFAULT)
 					{
+						glui::Frame insideUpperPart(glui::Box().xCenter().yTopPerc(0.05).
+							xDimensionPercentage(0.9).yDimensionPercentage(0.45)());
+
 						auto armourBox = glui::Box().xLeft().yTopPerc(0.1).xDimensionPercentage(1.f / 9.f).
 							yAspectRatio(1.f)();
 						auto start = armourBox;
 						glm::vec4 playerBox = armourBox;
-						playerBox.x += playerBox.z;
-						playerBox.w *= 4;
+						playerBox.w *= 3;
 						playerBox.z = (playerBox.w / playerCellSize.y) * playerCellSize.x;
-
-						//render armour stuff
-						renderer2d.renderRectangle(armourBox, oneInventorySlot);
-
-						armourBox.y += armourBox.w;
-						renderer2d.renderRectangle(armourBox, oneInventorySlot);
-
-						armourBox.y += armourBox.w;
-						renderer2d.renderRectangle(armourBox, oneInventorySlot);
-
-						armourBox.y += armourBox.w;
-						renderer2d.renderRectangle(armourBox, oneInventorySlot);
-
+					
 						//render player
 						renderer2d.renderRectangle(playerBox, playerCell);
-
+					
 						//render armour stuff to the right
 						armourBox = start;
 						armourBox.x = playerBox.x + playerBox.z;
 						renderer2d.renderRectangle(armourBox, oneInventorySlot);
-
+					
 						armourBox.y += armourBox.w;
 						renderer2d.renderRectangle(armourBox, oneInventorySlot);
-
+					
 						armourBox.y += armourBox.w;
 						renderer2d.renderRectangle(armourBox, oneInventorySlot);
-
-						armourBox.y += armourBox.w;
-						renderer2d.renderRectangle(armourBox, oneInventorySlot);
-
-					}
-
-
-					//crafting table stuff
-					if (insideCraftingTable)
-					{
-
-						glm::vec4 craftingStart = glui::Box().xLeftPerc(0.56).yTopPerc(0.2).xDimensionPercentage(1.f / 9.f).
-							yAspectRatio(1.f)();
-						renderer2d.renderRectangle(craftingStart, oneInventorySlot);
-						glm::vec4 secondCrafting = craftingStart; secondCrafting.x += craftingStart.z;
-						renderer2d.renderRectangle(secondCrafting, oneInventorySlot);
-						glm::vec4 thirdCrafting = secondCrafting; thirdCrafting.x += craftingStart.z;
-						renderer2d.renderRectangle(thirdCrafting, oneInventorySlot);
-
-
-						glm::vec4 fourthCrafting = craftingStart; fourthCrafting.y += craftingStart.w;
-						renderer2d.renderRectangle(fourthCrafting, oneInventorySlot);
-						glm::vec4 fifthCrafting = fourthCrafting; fifthCrafting.x += craftingStart.z;
-						renderer2d.renderRectangle(fifthCrafting, oneInventorySlot);
-						glm::vec4 sixthCrafting = fifthCrafting; sixthCrafting.x += craftingStart.z;
-						renderer2d.renderRectangle(sixthCrafting, oneInventorySlot);
-
-						glm::vec4 seventhCrafting = fourthCrafting; seventhCrafting.y += craftingStart.w;
-						renderer2d.renderRectangle(seventhCrafting, oneInventorySlot);
-						glm::vec4 eighthCrafting = seventhCrafting; eighthCrafting.x += craftingStart.z;
-						renderer2d.renderRectangle(eighthCrafting, oneInventorySlot);
-						glm::vec4 ninethCrafting = eighthCrafting; ninethCrafting.x += craftingStart.z;
-						renderer2d.renderRectangle(ninethCrafting, oneInventorySlot);
-
-
-						//result
-						glm::vec4 resultCrafting = craftingStart; resultCrafting.x += craftingStart.z * 4; resultCrafting.y += craftingStart.w * 1.f;
-						renderer2d.renderRectangle(resultCrafting, oneInventorySlot);
-
-
-						checkInsideOneCell(PlayerInventory::CRAFTING_INDEX, craftingStart);
-						checkInsideOneCell(PlayerInventory::CRAFTING_INDEX + 1, secondCrafting);
-						checkInsideOneCell(PlayerInventory::CRAFTING_INDEX + 2, thirdCrafting);
-						checkInsideOneCell(PlayerInventory::CRAFTING_INDEX + 3, fourthCrafting);
-						checkInsideOneCell(PlayerInventory::CRAFTING_INDEX + 4, fifthCrafting);
-						checkInsideOneCell(PlayerInventory::CRAFTING_INDEX + 5, sixthCrafting);
-						checkInsideOneCell(PlayerInventory::CRAFTING_INDEX + 6, seventhCrafting);
-						checkInsideOneCell(PlayerInventory::CRAFTING_INDEX + 7, eighthCrafting);
-						checkInsideOneCell(PlayerInventory::CRAFTING_INDEX + 8, ninethCrafting);
-
-
-						checkInsideOneCell(PlayerInventory::CRAFTING_RESULT_INDEX, resultCrafting);
-
-						renderOneItem(craftingStart, inventory.crafting[0], 4.f / 22.f);
-						renderOneItem(secondCrafting, inventory.crafting[1], 4.f / 22.f);
-						renderOneItem(thirdCrafting, inventory.crafting[2], 4.f / 22.f);
-						renderOneItem(fourthCrafting, inventory.crafting[3], 4.f / 22.f);
-						renderOneItem(fifthCrafting, inventory.crafting[4], 4.f / 22.f);
-						renderOneItem(sixthCrafting, inventory.crafting[5], 4.f / 22.f);
-						renderOneItem(seventhCrafting, inventory.crafting[6], 4.f / 22.f);
-						renderOneItem(eighthCrafting, inventory.crafting[7], 4.f / 22.f);
-						renderOneItem(ninethCrafting, inventory.crafting[8], 4.f / 22.f);
-
-						renderOneItem(resultCrafting, itemToCraft, 4.f / 22.f);
-
-					}
-					else
-					{
-						//crafting (normal)
-
-						glm::vec4 craftingStart = glui::Box().xLeftPerc(0.56).yTopPerc(0.2).xDimensionPercentage(1.f / 9.f).
-							yAspectRatio(1.f)();
-						renderer2d.renderRectangle(craftingStart, oneInventorySlot);
-						glm::vec4 secondCrafting = craftingStart; secondCrafting.x += craftingStart.z;
-						renderer2d.renderRectangle(secondCrafting, oneInventorySlot);
-						glm::vec4 thirdCrafting = craftingStart; thirdCrafting.y += craftingStart.w;
-						renderer2d.renderRectangle(thirdCrafting, oneInventorySlot);
-						glm::vec4 fourthCrafting = craftingStart; fourthCrafting.x += craftingStart.z; fourthCrafting.y += craftingStart.w;
-						renderer2d.renderRectangle(fourthCrafting, oneInventorySlot);
-
-
-						//result
-						glm::vec4 resultCrafting = craftingStart; resultCrafting.x += craftingStart.z * 3; resultCrafting.y += craftingStart.w * 0.5;
-						renderer2d.renderRectangle(resultCrafting, oneInventorySlot);
-
-
-						checkInsideOneCell(PlayerInventory::CRAFTING_INDEX, craftingStart);
-						checkInsideOneCell(PlayerInventory::CRAFTING_INDEX + 1, secondCrafting);
-						checkInsideOneCell(PlayerInventory::CRAFTING_INDEX + 2, thirdCrafting);
-						checkInsideOneCell(PlayerInventory::CRAFTING_INDEX + 3, fourthCrafting);
-
-						checkInsideOneCell(PlayerInventory::CRAFTING_RESULT_INDEX, resultCrafting);
-
-						renderOneItem(craftingStart, inventory.crafting[0], 4.f / 22.f);
-						renderOneItem(secondCrafting, inventory.crafting[1], 4.f / 22.f);
-						renderOneItem(thirdCrafting, inventory.crafting[2], 4.f / 22.f);
-						renderOneItem(fourthCrafting, inventory.crafting[3], 4.f / 22.f);
-						
-						renderOneItem(resultCrafting, itemToCraft, 4.f / 22.f);
+					
 					
 					}
-				
+					
 
 					renderItems(9, inventoryBars);
 					renderItems(18, inventoryBars2);
@@ -681,16 +745,20 @@ void UiENgine::renderGameUI(float deltaTime, int w, int h
 				renderItems(0, hotBarBox);
 
 
-				if (isCreative)
+				//if (isCreative)
 				{
 
-					GLuint textures[3] = {
+					int slotsCounter = 2;
+					if (isCreative) { slotsCounter = 4; }
+
+					GLuint textures[4] = {
 						blocksLoader.texturesIdsItems[wooddenSword - ItemsStartPoint],
+						blocksLoader.texturesIds[getGpuIdIndexForBlock(craftingTable, 0)],
 						blocksLoader.texturesIds[getGpuIdIndexForBlock(grassBlock, 0)],
 						blocksLoader.texturesIdsItems[stick - ItemsStartPoint],
 					};
 
-					for (int i = 0; i < 3; i++)
+					for (int i = 0; i < slotsCounter; i++)
 					{
 						glm::vec4 selected = {};
 						if (i == currentInventoryTab)
@@ -772,12 +840,12 @@ void UiENgine::renderGameUI(float deltaTime, int w, int h
 			renderOneItem(itemPos, inventory.heldInMouse, 0);
 
 			//render hovered item stuff
-			if (cursorItemIndex >= 0 && !inventory.heldInMouse.type)
+			if (currentItem && !inventory.heldInMouse.type)
 			{
 
-				auto item = inventory.getItemFromIndex(cursorItemIndex);
+				auto item = currentItem;
 
-				if (item && item->type && item->metaData.size())
+				if (item->type)
 				{
 
 					auto box = cursorItemIndexBox;
@@ -793,7 +861,6 @@ void UiENgine::renderGameUI(float deltaTime, int w, int h
 					std::string text = item->formatMetaDataToString();
 
 					renderTextIntoBox(renderer2d, text, font, box, Colors_White, true, true);
-					
 
 				}
 

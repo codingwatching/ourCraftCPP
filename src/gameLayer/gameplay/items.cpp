@@ -2,6 +2,7 @@
 #include <serializing.h>
 #include <platformTools.h>
 #include <iostream>
+#include <magic_enum.hpp>
 
 //todo can be placed
 
@@ -197,12 +198,21 @@ bool Item::isShovel()
 
 std::string Item::formatMetaDataToString()
 {
-	if (metaData.size())
+
+	std::string rez = getItemName();
+
+	if (counter > 1)
 	{
-		return "Yes";
+		rez += " x";
+		rez += std::to_string(counter);
 	}
 
-	return "";
+	if (metaData.size())
+	{
+		rez += "\nYes";
+	}
+
+	return rez;
 }
 
 
@@ -215,13 +225,6 @@ Item *PlayerInventory::getItemFromIndex(int index)
 	else if (index == PlayerInventory::INVENTORY_CAPACITY)
 	{
 		return &heldInMouse;
-	}
-	else if (index < PlayerInventory::CRAFTING_INDEX + 9)
-	{
-		return &crafting[index - PlayerInventory::CRAFTING_INDEX];
-	}if (index == PlayerInventory::CRAFTING_RESULT_INDEX)
-	{
-		return 0;
 	}
 
 	return nullptr;
@@ -241,10 +244,6 @@ void PlayerInventory::formatIntoData(std::vector<unsigned char> &data)
 
 	heldInMouse.formatIntoData(data);
 
-	for (int i = 0; i < 4; i++)
-	{
-		crafting[i].formatIntoData(data);
-	}
 
 }
 
@@ -282,11 +281,6 @@ bool PlayerInventory::readFromData(void *data, size_t size)
 	}
 
 	if (!readOne(heldInMouse)) { return 0; }
-
-	for (int i = 0; i < 4; i++)
-	{
-		if (!readOne(crafting[i])) { return 0; }
-	}
 
 	
 	return true;
@@ -344,50 +338,9 @@ int PlayerInventory::tryPickupItem(const Item &item)
 	return 0;
 }
 
-void PlayerInventory::craft4(int count)
-{
-	for (int i = 0; i < 4; i++)
-	{
-		if (crafting[i].counter < count)
-		{
-			crafting[i] = {};
-			permaAssertComment(0, "Error in craft method in player inventory");
-		}
-		else
-		{
-			crafting[i].counter -= count;
-
-			if (crafting[i].counter <= 0)
-			{
-				crafting[i] = {};
-			}
-		}
-	}
-}
-
-void PlayerInventory::craft9(int count)
-{
-	for (int i = 0; i < 9; i++)
-	{
-		if (crafting[i].counter < count)
-		{
-			crafting[i] = {};
-			permaAssertComment(0, "Error in craft method in player inventory");
-		}
-		else
-		{
-			crafting[i].counter -= count;
-
-			if (crafting[i].counter <= 0)
-			{
-				crafting[i] = {};
-			}
-		}
-	}
-}
 
 //for textures
-const char *itemsNames[] = 
+const char *itemsNamesTextures[] = 
 {
 	"stick.png",
 	"coal.png",
@@ -407,14 +360,36 @@ const char *itemsNames[] =
 	"", //eggs
 	"",
 	"",
+};
 
+const char *itemsNames[] =
+{
+	"stick",
+	"coal",
+	"wooden_sword",
+	"wooden_pickaxe",
+	"wooden_axe",
+	"wooden_shovel",
+
+	"trainingScythe",
+	"trainingSword",
+	"trainingWarHammer",
+	"trainingFlail",
+	"trainingSpear",
+	"trainingKnife",
+	"trainingBattleAxe",
+
+	"", //eggs
+	"",
+	"",
 };
 
 const char *getItemTextureName(int itemId)
 {
+	static_assert(sizeof(itemsNamesTextures) / sizeof(itemsNamesTextures[0]) == lastItem - ItemsStartPoint);
 	static_assert(sizeof(itemsNames) / sizeof(itemsNames[0]) == lastItem - ItemsStartPoint);
 
-	return itemsNames[itemId-ItemsStartPoint];
+	return itemsNamesTextures[itemId-ItemsStartPoint];
 }
 
 
@@ -434,10 +409,43 @@ bool areItemsTheSame(Item &a, Item &b)
 	return 1;
 }
 
+
 bool isItem(unsigned short type)
 {
 	return type >= ItemsStartPoint && type < ItemTypes::lastItem;
 }
+
+
+bool canItemBeMovedToAndMoveIt(Item &from, Item &to)
+{
+
+	if (to.type == 0)
+	{
+		to = std::move(from);
+		from = Item();
+		return true;
+	}
+	else if(areItemsTheSame(from, to))
+	{
+
+		int totalSize = from.counter + to.counter;
+
+		if (totalSize > from.getStackSize())
+		{
+			return 0;
+		}
+		else
+		{
+			to.counter += from.counter;
+			from = Item();
+			return 1;
+		}
+	}
+
+	return 0;
+
+}
+
 
 //create item createItem
 Item itemCreator(unsigned short type, unsigned char counter)
@@ -507,3 +515,18 @@ float computeMineDurationTime(BlockType type, Item &item)
 	std::cout << timer << "\n";
 	return timer;
 }
+
+
+
+std::string Item::getItemName()
+{
+	if (isItem(type))
+	{
+		return itemsNames[type - ItemsStartPoint];
+	}
+	else
+	{
+		return std::string(magic_enum::enum_name((BlockTypes)type));
+	}
+}
+
